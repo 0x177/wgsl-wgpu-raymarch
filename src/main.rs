@@ -1,157 +1,420 @@
-#![deny(clippy::all)]
-#![forbid(unsafe_code)]
+// use clap::Parser;
+use futures::executor::block_on;
+use notify::{RawEvent, RecommendedWatcher, Watcher};
+use std::{
+    borrow::Cow,
+    fs::{read_to_string},
+    path::{PathBuf},
+    sync::mpsc::channel,
+    time::Instant,
+};
+use wgpu::{
+    util::{BufferInitDescriptor, DeviceExt},
+    Adapter, Backends, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
+    BindGroupLayoutEntry, BufferBindingType, BufferUsages, CommandEncoderDescriptor,
+    CompositeAlphaMode, Device, DeviceDescriptor, Features, Instance, Limits, LoadOp, Operations,
+    PipelineLayout, PrimitiveState, Queue, RenderPassColorAttachment, RenderPassDescriptor,
+    RenderPipeline, RequestAdapterOptions, ShaderModule, ShaderSource, ShaderStages, Surface,
+    SurfaceConfiguration, TextureFormat,
+};
+use winit::event::Event::UserEvent;
+use winit::{
+    dpi::PhysicalSize,
+    event::WindowEvent,
+    event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy},
+    window::{Window, WindowBuilder},
+};
 
-use crate::renderer::NoiseRenderer;
-use error_iter::ErrorIter as _;
-use log::error;
-use pixels::{Error, Pixels, SurfaceTexture};
-use winit::dpi::LogicalSize;
-use winit::event::{Event, VirtualKeyCode};
-use winit::event_loop::{ControlFlow, EventLoop};
-use winit::window::WindowBuilder;
-use winit_input_helper::WinitInputHelper;
-
-mod renderer;
-
-const WIDTH: u32 = 320;
-const HEIGHT: u32 = 240;
-const BOX_SIZE: i16 = 64;
-
-/// Representation of the application state. In this example, a box will bounce around the screen.
-struct World {
-    box_x: i16,
-    box_y: i16,
-    velocity_x: i16,
-    velocity_y: i16,
+#[derive(Debug)]
+enum UserEvents {
+    Reload,
+    WGPUError,
 }
 
-fn main() -> Result<(), Error> {
-    env_logger::init();
-    let event_loop = EventLoop::new();
-    let mut input = WinitInputHelper::new();
-    let window = {
-        let size = LogicalSize::new(WIDTH as f64, HEIGHT as f64);
-        WindowBuilder::new()
-            .with_title("Custom Shader")
-            .with_inner_size(size)
-            .with_min_inner_size(size)
+// #[derive(Parser)]
+// struct Opts {
+//     wgsl_file: PathBuf,
+
+//     #[clap(short, long)]
+//     create: bool,
+
+//     #[clap(short, long)]
+//     always_on_top: bool,
+// }
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Zeroable, bytemuck::Pod)]
+struct Uniforms {
+    pub mouse: [f32; 2],
+    pub time: f32,
+    pub pad: f32,
+}
+
+impl Default for Uniforms {
+    fn default() -> Uniforms {
+        Uniforms {
+            time: 0.,
+            mouse: [0.0, 0.0],
+            pad: 0.,
+        }
+    }
+}
+
+impl Uniforms {
+    fn as_bytes(&self) -> &[u8] {
+        bytemuck::bytes_of(self)
+    }
+}
+
+struct Playground {
+    // watch_path: PathBuf,
+    render_pipeline: RenderPipeline,
+    window: Window,
+    device: Device,
+    vertex_shader_module: ShaderModule,
+    pipeline_layout: PipelineLayout,
+    swapchain_format: TextureFormat,
+    surface_config: SurfaceConfiguration,
+    surface: Surface,
+
+    uniforms: Uniforms,
+}
+
+impl Playground {
+    fn reload(&mut self) {
+        println!("Reload.");
+
+        self.recreate_pipeline();
+
+        self.window.request_redraw();
+    }
+
+    fn listen(watch_path: PathBuf, proxy: EventLoopProxy<UserEvents>) {
+        let (tx, rx) = channel();
+
+        let mut watcher: RecommendedWatcher = Watcher::new_raw(tx).unwrap();
+
+        watcher
+            .watch(&watch_path, notify::RecursiveMode::NonRecursive)
+            .unwrap();
+
+        loop {
+            match rx.recv() {
+                Ok(RawEvent {
+                    path: Some(_),
+                    op: Ok(_),
+                    ..
+                }) => {
+                    proxy.send_event(UserEvents::Reload).unwrap();
+                }
+                Ok(event) => println!("broken event: {:?}", event),
+                Err(e) => println!("watch error: {:?}", e),
+            }
+        }
+    }
+
+    async fn get_async_stuff(instance: &Instance, surface: &Surface) -> (Adapter, Device, Queue) {
+        let adapter = instance
+            .request_adapter(&RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: Some(surface),
+                force_fallback_adapter: false,
+            })
+            .await
+            .unwrap();
+
+        let (device, queue) = adapter
+            .request_device(
+                &DeviceDescriptor {
+                    label: None,
+                    features: Features::empty(),
+                    limits: Limits::default(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        (adapter, device, queue)
+    }
+
+    fn recreate_pipeline(&mut self) {
+        match Self::create_pipeline(
+            &self.device,
+            &self.vertex_shader_module,
+            &self.pipeline_layout,
+            self.swapchain_format,
+            // &self.watch_path,
+        ) {
+            Ok(render_pipeline) => self.render_pipeline = render_pipeline,
+            Err(e) => println!("{}", e),
+        }
+    }
+
+    fn create_pipeline(
+        device: &Device,
+        vertex_shader_module: &ShaderModule,
+        pipeline_layout: &PipelineLayout,
+        swapchain_format: TextureFormat,
+        // frag_shader_path: &Path,
+    ) -> Result<RenderPipeline, String> {
+        let frag_wgsl = read_to_string("src/shader.wgsl").unwrap();
+
+        let fragement_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Fragment shader"),
+            source: ShaderSource::Wgsl(Cow::Owned(frag_wgsl)),
+        });
+
+        Ok(
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: None,
+                layout: Some(pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: vertex_shader_module,
+                    entry_point: "vs_main",
+                    buffers: &[],
+                },
+                primitive: PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                fragment: Some(wgpu::FragmentState {
+                    module: &fragement_shader_module,
+                    entry_point: "fs_main",
+                    targets: &[Some(swapchain_format.into())],
+                }),
+            }),
+        )
+    }
+
+    pub fn resize(&mut self, new_size: &PhysicalSize<u32>) {
+        if new_size.width > 0 && new_size.height > 0 {
+            self.surface_config.width = new_size.width;
+            self.surface_config.height = new_size.height;
+
+            self.surface.configure(&self.device, &self.surface_config);
+            self.window.request_redraw();
+        }
+    }
+
+    pub fn run() {
+        let event_loop = EventLoopBuilder::<UserEvents>::with_user_event().build();
+        let proxy = event_loop.create_proxy();
+
+        {
+            let watch_path = "src/shader.wgsl";
+            std::thread::spawn(move || Self::listen(watch_path.into(), proxy));
+        }
+
+        let window = WindowBuilder::new()
+            .with_inner_size(PhysicalSize::new(600, 600))
+            .with_title("WGSL Playground")
             .build(&event_loop)
-            .unwrap()
-    };
+            .unwrap();
+        let size = window.inner_size();
 
-    let window_size = window.inner_size();
-    let mut pixels = {
-        let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, &window);
-        Pixels::new(WIDTH, HEIGHT, surface_texture)?
-    };
-    let mut world = World::new();
-    let mut time = 0.0;
-    let mut noise_renderer = NoiseRenderer::new(&pixels, window_size.width, window_size.height)?;
+        window.set_always_on_top(false);
 
-    event_loop.run(move |event, _, control_flow| {
-        // Draw the current frame
-        if let Event::RedrawRequested(_) = event {
-            world.draw(pixels.frame_mut());
+        let instance = wgpu::Instance::new(Backends::all());
+        let surface = unsafe { instance.create_surface(&window) };
+        let (adapter, device, queue) = block_on(Self::get_async_stuff(&instance, &surface));
 
-            let render_result = pixels.render_with(|encoder, render_target, context| {
-                let noise_texture = noise_renderer.texture_view();
-                context.scaling_renderer.render(encoder, noise_texture);
+        let mut error_state = false;
 
-                noise_renderer.update(&context.queue, time);
-                time += 0.01;
-
-                noise_renderer.render(encoder, render_target, context.scaling_renderer.clip_rect());
-
-                Ok(())
-            });
-
-            if let Err(err) = render_result {
-                log_error("pixels.render_with", err);
-                *control_flow = ControlFlow::Exit;
-                return;
-            }
-        }
-
-        // Handle input events
-        if input.update(&event) {
-            // Close events
-            if input.key_pressed(VirtualKeyCode::Escape) || input.close_requested() {
-                *control_flow = ControlFlow::Exit;
-                return;
-            }
-
-            // Resize the window
-            if let Some(size) = input.window_resized() {
-                if let Err(err) = pixels.resize_surface(size.width, size.height) {
-                    log_error("pixels.resize_surface", err);
-                    *control_flow = ControlFlow::Exit;
-                    return;
+        // Handle errors
+        let proxy = event_loop.create_proxy();
+        device.on_uncaptured_error(move |error| {
+            // Sending the event will stop the redraw
+            proxy.send_event(UserEvents::WGPUError).unwrap();
+            if let wgpu::Error::Validation {
+                source: _,
+                description,
+            } = error
+            {
+                if let Some(_) = description.find("note: label = `Fragment shader`") {
+                    println!("{}", description);
                 }
-                if let Err(err) = noise_renderer.resize(&pixels, size.width, size.height) {
-                    log_error("noise_renderer.resize", err);
-                    *control_flow = ControlFlow::Exit;
-                    return;
-                }
-            }
-
-            // Update internal state and request a redraw
-            world.update();
-            window.request_redraw();
-        }
-    });
-}
-
-fn log_error<E: std::error::Error + 'static>(method_name: &str, err: E) {
-    error!("{method_name}() failed: {err}");
-    for source in err.sources().skip(1) {
-        error!("  Caused by: {source}");
-    }
-}
-
-impl World {
-    /// Create a new `World` instance that can draw a moving box.
-    fn new() -> Self {
-        Self {
-            box_x: 24,
-            box_y: 16,
-            velocity_x: 1,
-            velocity_y: 1,
-        }
-    }
-
-    /// Update the `World` internal state; bounce the box around the screen.
-    fn update(&mut self) {
-        if self.box_x <= 0 || self.box_x + BOX_SIZE > WIDTH as i16 {
-            self.velocity_x *= -1;
-        }
-        if self.box_y <= 0 || self.box_y + BOX_SIZE > HEIGHT as i16 {
-            self.velocity_y *= -1;
-        }
-
-        self.box_x += self.velocity_x;
-        self.box_y += self.velocity_y;
-    }
-
-    /// Draw the `World` state to the frame buffer.
-    ///
-    /// Assumes the default texture format: [`pixels::wgpu::TextureFormat::Rgba8UnormSrgb`]
-    fn draw(&self, frame: &mut [u8]) {
-        for (i, pixel) in frame.chunks_exact_mut(4).enumerate() {
-            let x = (i % WIDTH as usize) as i16;
-            let y = (i / WIDTH as usize) as i16;
-
-            let inside_the_box = x >= self.box_x
-                && x < self.box_x + BOX_SIZE
-                && y >= self.box_y
-                && y < self.box_y + BOX_SIZE;
-
-            let rgba = if inside_the_box {
-                [0x5e, 0x48, 0xe8, 0xff]
             } else {
-                [0x48, 0xb2, 0xe8, 0xff]
-            };
+                println!("{}", error);
+            }
+        });
 
-            pixel.copy_from_slice(&rgba);
-        }
+        let vertex_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Vertex shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("./vertex.wgsl").into()),
+        });
+
+        let uniforms = Uniforms::default();
+
+        let uniforms_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: None,
+            contents: uniforms.as_bytes(),
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        });
+
+        let uniforms_buffer_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::FRAGMENT,
+                count: None,
+                ty: wgpu::BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+            }],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[&uniforms_buffer_layout],
+            push_constant_ranges: &[],
+        });
+
+        let swapchain_format = surface.get_supported_formats(&adapter);
+
+        let render_pipeline = match Self::create_pipeline(
+            &device,
+            &vertex_shader_module,
+            &pipeline_layout,
+            swapchain_format[0],
+            // &opts.wgsl_file,
+        ) {
+            Ok(render_pipeline) => render_pipeline,
+            Err(e) => {
+                println!("Could not start due to error: {}", &e);
+                return;
+            }
+        };
+
+        let surface_config = SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: swapchain_format[0],
+            width: size.width,
+            height: size.height,
+            present_mode: wgpu::PresentMode::Fifo,
+            alpha_mode: CompositeAlphaMode::Auto,
+        };
+
+        surface.configure(&device, &surface_config);
+
+        let uniforms_buffer_bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &uniforms_buffer_layout,
+            entries: &[BindGroupEntry {
+                binding: 0,
+                resource: uniforms_buffer.as_entire_binding(),
+            }],
+        });
+
+        let mut playground = Playground {
+            // watch_path: "src/shader.wgsl".into(),
+            render_pipeline,
+            window,
+            device,
+            swapchain_format: swapchain_format[0],
+            pipeline_layout,
+            vertex_shader_module,
+            surface_config,
+            surface,
+            uniforms,
+        };
+
+        let instant = Instant::now();
+        event_loop.run(move |event, _, control_flow| match event {
+            winit::event::Event::WindowEvent { ref event, .. } => match event {
+                WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                WindowEvent::Resized(new_size) => playground.resize(new_size),
+                WindowEvent::CursorMoved { position, .. } => {
+                    let size = playground.window.inner_size();
+                    let normalized_x = position.x as f32 / size.width as f32;
+                    let normalized_y = position.y as f32 / size.height as f32;
+                    playground.uniforms.mouse = [normalized_x * 2. - 1., -normalized_y * 2. + 1.];
+                }
+                WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
+                    playground.resize(new_inner_size)
+                }
+                _ => {}
+            },
+            winit::event::Event::RedrawRequested(_) => {
+                let output_frame = playground.surface.get_current_texture();
+
+                if output_frame.is_err() {
+                    return;
+                }
+
+                let output = output_frame.unwrap();
+                let view = output
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
+
+                playground.uniforms.time = instant.elapsed().as_secs_f32();
+                queue.write_buffer(&uniforms_buffer, 0, playground.uniforms.as_bytes());
+
+                let mut encoder = playground
+                    .device
+                    .create_command_encoder(&CommandEncoderDescriptor { label: None });
+
+                {
+                    let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                        label: None,
+                        color_attachments: &[Some(RenderPassColorAttachment {
+                            view: &view,
+                            resolve_target: None,
+                            ops: Operations {
+                                load: LoadOp::Clear(wgpu::Color::BLACK),
+                                store: true,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                    });
+                    render_pass.set_pipeline(&playground.render_pipeline);
+                    render_pass.set_bind_group(0, &uniforms_buffer_bind_group, &[]);
+                    render_pass.draw(0..3, 0..1);
+                }
+
+                queue.submit(std::iter::once(encoder.finish()));
+                output.present();
+            }
+            UserEvent(evt) => match evt {
+                UserEvents::Reload => {
+                    error_state = false;
+                    playground.reload()
+                }
+                UserEvents::WGPUError => {
+                    error_state = true;
+                }
+            },
+            winit::event::Event::MainEventsCleared => {
+                if !error_state {
+                    playground.window.request_redraw();
+                }
+            }
+            _ => {}
+        });
     }
+}
+
+fn main() {
+    wgpu_subscriber::initialize_default_subscriber(None);
+
+    // if opts.create {
+    //     let mut file = if let Ok(file) = OpenOptions::new()
+    //         .write(true)
+    //         .create_new(true)
+    //         .open(opts.wgsl_file.clone())
+    //     {
+    //         file
+    //     } else {
+    //         println!(
+    //             "Couldn't create file {:?}, make sure it doesn't already exist.",
+    //             &opts.wgsl_file
+    //         );
+    //         return;
+    //     };
+    //     file.write_all(include_bytes!("frag.default.wgsl")).unwrap();
+    // }
+
+    Playground::run();
 }

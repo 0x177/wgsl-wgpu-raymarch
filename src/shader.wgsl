@@ -4,6 +4,15 @@ struct VertexOutput {
 };
 
 
+struct Uniforms {
+    mouse: vec2<f32>,
+    time: f32,
+};
+
+@group(0) @binding(0)
+var<uniform> uniforms: Uniforms;
+
+
 fn get_rot_matrix(a:f32) -> mat2x2<f32> {
     let s = sin(a);
     let c = cos(a);
@@ -11,13 +20,10 @@ fn get_rot_matrix(a:f32) -> mat2x2<f32> {
     return mat2x2<f32>(c,-s,s,c);
 }
 
-fn get_material(i:i32) -> vec3<f32> {
-    return vec3<f32>(0.89,0.109,0.474);
-}
 
 fn smin(a:f32,b:f32,k:f32) -> f32 {
-  let h:f32 = clamp(0.5 + 0.5*(a-b)/k, 0.0, 1.0);
-  return mix(a, b, h) - k*h*(1.0-h);
+    let h:f32 = clamp(0.5 + 0.5*(a-b)/k, 0.0, 1.0);
+    return mix(a, b, h) - k*h*(1.0-h);
 }
 
 fn signed_distance_bean(p:vec3<f32>,a:vec3<f32>,b:vec3<f32>,radius:f32) -> f32 {
@@ -42,15 +48,48 @@ fn signed_distance_box(p:vec3<f32>,size:vec3<f32>) -> f32 {
 
 fn get_distance(p:vec3<f32>) -> f32 {
     let sphere1 = vec4<f32>(0.0,1.0,6.0,1.0);
-    let sphere2 = vec4<f32>(1.0,1.3,6.0,1.0);
+    let sphere2 = vec4<f32>(3.0,1.3,6.0,1.0);
 
-    let sphere_distance = max(-length(p-sphere1.xyz)-sphere1.w,length(p-sphere2.xyz)-sphere2.w);
+    let sphere_distance = smin(length(p-sphere1.xyz)-sphere1.w,length(p-sphere2.xyz)-sphere2.w,0.5);
     let plane_distance = p.y;
     let capsule_distance = signed_distance_bean(p,vec3<f32>(1.0,1.0,6.0),vec3<f32>(3.0,2.0,6.0),0.2);
     let torus_distance = signed_distance_doughnut(p-vec3<f32>(-2.0,1.0,6.0),vec2<f32>(1.5,0.5));
     let cube_distance = signed_distance_box(p-vec3<f32>(-3.0,2.0,4.0),vec3<f32>(0.5,0.5,0.5));
 
-    return min(smin(capsule_distance,smin(min(sphere_distance,cube_distance),torus_distance,0.5),0.5),plane_distance);
+    return min(min(capsule_distance,min(min(sphere_distance,cube_distance),torus_distance)),plane_distance);
+    // return min(sphere_distance,plane_distance);
+}
+
+fn get_material(p:vec3<f32>) -> i32 {
+    let sphere1 = vec4<f32>(0.0,1.0,6.0,1.0);
+    let sphere2 = vec4<f32>(3.0,1.3,6.0,1.0);
+
+    let sphere_distance = smin(length(p-sphere1.xyz)-sphere1.w,length(p-sphere2.xyz)-sphere2.w,0.5);
+    let plane_distance = p.y;
+    let capsule_distance = signed_distance_bean(p,vec3<f32>(1.0,1.0,6.0),vec3<f32>(3.0,2.0,6.0),0.2);
+    let torus_distance = signed_distance_doughnut(p-vec3<f32>(-2.0,1.0,6.0),vec2<f32>(1.5,0.5));
+    let cube_distance = signed_distance_box(p-vec3<f32>(-3.0,2.0,4.0),vec3<f32>(0.5,0.5,0.5));
+
+    let distance = min(min(capsule_distance,min(min(sphere_distance,cube_distance),torus_distance)),plane_distance);
+
+    if distance == sphere_distance {
+        return 1;
+    }
+    if distance == plane_distance {
+        return 2;
+    }
+    if distance == capsule_distance {
+        return 3;
+    }
+    if distance == torus_distance {
+        return 4;
+    }
+    if distance == cube_distance {
+        return 5;
+    }
+
+    return 0;
+    // return min(sphere_distance,plane_distance);
 }
 
 fn get_normal(p:vec3<f32>) -> vec3<f32> {
@@ -82,17 +121,16 @@ fn ray_march(ray_origin_unmut:vec3<f32>,ray_direction:vec3<f32>,max_steps:i32,ma
 }
 
 
-fn get_light(p:vec3<f32>,surface_distance:f32,max_steps:i32,max_distance:f32,id:i32) -> vec3<f32> {
-    let color = get_material(id);
+fn get_light(p:vec3<f32>,surface_distance:f32,max_steps:i32,max_distance:f32) -> f32 {
     var light_position = vec3<f32>(2.0,5.0,3.0);
-    let temp_pos = light_position.xz * get_rot_matrix(3.1415/2.0);
+    let temp_pos = light_position.xz * get_rot_matrix(uniforms.time);
     light_position.x = temp_pos.x;
     light_position.z = temp_pos.y;
     let light = normalize(light_position-p);
     let normal = get_normal(p);
 
     
-    var dif = color * clamp(dot(normal,light),0.0,1.0);
+    var dif = clamp(dot(normal,light),0.0,1.0);
     let d = ray_march(p+normal*surface_distance*2.0,vec3<f32>(1.0,1.0,1.0),max_steps,max_distance,surface_distance);
 
     if d < length(light_position-p) {
@@ -115,8 +153,27 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let d = ray_march(ray_origin,ray_direction,max_steps,max_distance,surface_distance);
     let light_point = ray_origin + ray_direction * d;
-    let diffuse_lighting = get_light(light_point,surface_distance,max_steps,max_distance,1);
-    col = diffuse_lighting;
+    let diffuse_lighting = get_light(light_point,surface_distance,max_steps,max_distance);
+    col = vec3<f32>(diffuse_lighting);
+    let material = get_material(light_point);
+    if material == 1 {
+        col = vec3<f32>(194./255.,130./255.,2./255.);
+    }
+    if material == 2 {
+        col = vec3<f32>(143./255.,120./255.,73./255.);
+    }
+    if material == 3 {
+        col = vec3<f32>(253./255.,103./255.,58./255.);
+    }
+    if material == 4 {
+        col = vec3<f32>(253./255.,103./255.,58./255.);
+    }
+    if material == 5 {
+        col = vec3<f32>(253./255.,103./255.,58./255.);
+    }
+    col *= diffuse_lighting;
+    //gamma correction
+    col = pow(col,vec3<f32>(0.4545,0.4545,0.4545));
     
     return vec4<f32>(col,1.0);
 }
