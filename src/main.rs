@@ -207,8 +207,8 @@ impl Playground {
         }
 
         let window = WindowBuilder::new()
-            .with_inner_size(PhysicalSize::new(600, 600))
-            .with_title("WGSL Playground")
+            .with_inner_size(PhysicalSize::new(1920, 1080))
+            .with_title("cool shapes :3")
             .build(&event_loop)
             .unwrap();
         let size = window.inner_size();

@@ -37,13 +37,37 @@ fn signed_distance_bean(p:vec3<f32>,a:vec3<f32>,b:vec3<f32>,radius:f32) -> f32 {
     return length(p-c)-radius;
 }
 
-fn signed_distance_doughnut(p:vec3<f32>,radius:vec2<f32>) -> f32 {
+fn signed_distance_torus(p:vec3<f32>,radius:vec2<f32>) -> f32 {
     let x = length(p.xz)-radius.x;
     return length(vec2<f32>(x,p.y))-radius.y;
 }
 
 fn signed_distance_box(p:vec3<f32>,size:vec3<f32>) -> f32 {
-    return length(max(abs(p)-size,vec3<f32>(0.0,0.0,0.0)));
+    return length(max(abs(p)-size,vec3<f32>(0.0,0.0,0.0))) - 0.1;
+}
+
+fn mandelbulb(p: vec3<f32>,power:f32) -> f32 {
+    var z = p;
+    var dr = 1.0;
+    var r = 0.0;
+
+    for (var i = 0; i < 15; i++) {
+        r = length(z);
+
+        if r > 2.0 {
+            break;
+        }
+
+        let theta = acos(z.z/r) * power;
+        let phi = atan2(z.y,z.x) * power;
+        let zr = pow(r,power);
+
+        dr = pow(r,power - 1.0) * power * dr + 1.0;
+        z = zr * vec3<f32>(sin(theta)*cos(phi),sin(phi)*sin(theta),cos(theta));
+        z += p;
+    }
+
+    return 0.5 * log(r) * r / dr;
 }
 
 fn get_distance(p:vec3<f32>) -> f32 {
@@ -53,13 +77,17 @@ fn get_distance(p:vec3<f32>) -> f32 {
     let sphere_distance = smin(length(p-sphere1.xyz)-sphere1.w,length(p-sphere2.xyz)-sphere2.w,0.5);
     let plane_distance = p.y;
     let capsule_distance = signed_distance_bean(p,vec3<f32>(1.0,1.0,6.0),vec3<f32>(3.0,2.0,6.0),0.2);
-    let torus_distance = signed_distance_doughnut(p-vec3<f32>(-2.0,1.0,6.0),vec2<f32>(1.5,0.5));
+    let torus_distance = signed_distance_torus(p-vec3<f32>(-2.0,1.0,6.0),vec2<f32>(1.5,0.5));
     let cube_distance = signed_distance_box(p-vec3<f32>(-3.0,2.0,4.0),vec3<f32>(0.5,0.5,0.5));
+    let bulb = mandelbulb(p+vec3<f32>(3.0,-1.0,-2.0),uniforms.time);
 
-    return min(min(capsule_distance,min(min(sphere_distance,cube_distance),torus_distance)),plane_distance);
-    // return min(sphere_distance,plane_distance);
+    return smin(smin(sphere_distance,smin(smin(capsule_distance,smin(torus_distance,cube_distance,1.0),1.0),bulb,1.0),1.0),plane_distance,1.0);
+
 }
 
+
+//this and get_distance() can and should be combiened. it isn't combiened here make how things work
+//clearer
 fn get_material(p:vec3<f32>) -> i32 {
     let sphere1 = vec4<f32>(0.0,1.0,6.0,1.0);
     let sphere2 = vec4<f32>(3.0,1.3,6.0,1.0);
@@ -67,7 +95,7 @@ fn get_material(p:vec3<f32>) -> i32 {
     let sphere_distance = smin(length(p-sphere1.xyz)-sphere1.w,length(p-sphere2.xyz)-sphere2.w,0.5);
     let plane_distance = p.y;
     let capsule_distance = signed_distance_bean(p,vec3<f32>(1.0,1.0,6.0),vec3<f32>(3.0,2.0,6.0),0.2);
-    let torus_distance = signed_distance_doughnut(p-vec3<f32>(-2.0,1.0,6.0),vec2<f32>(1.5,0.5));
+    let torus_distance = signed_distance_torus(p-vec3<f32>(-2.0,1.0,6.0),vec2<f32>(1.5,0.5));
     let cube_distance = signed_distance_box(p-vec3<f32>(-3.0,2.0,4.0),vec3<f32>(0.5,0.5,0.5));
 
     let distance = min(min(capsule_distance,min(min(sphere_distance,cube_distance),torus_distance)),plane_distance);
@@ -149,28 +177,31 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let surface_distance: f32 = 0.01; 
 
     let ray_origin = vec3<f32>(0.0,1.0,0.0);
-    let ray_direction = normalize(vec3<f32>(in.coord.x,in.coord.y,1.0));
+    let ray_direction = normalize(vec3<f32>(in.coord.x+uniforms.mouse.x,in.coord.y+uniforms.mouse.y,1.0));
 
     let d = ray_march(ray_origin,ray_direction,max_steps,max_distance,surface_distance);
     let light_point = ray_origin + ray_direction * d;
     let diffuse_lighting = get_light(light_point,surface_distance,max_steps,max_distance);
     col = vec3<f32>(diffuse_lighting);
-    let material = get_material(light_point);
-    if material == 1 {
-        col = vec3<f32>(194./255.,130./255.,2./255.);
-    }
-    if material == 2 {
-        col = vec3<f32>(143./255.,120./255.,73./255.);
-    }
-    if material == 3 {
-        col = vec3<f32>(253./255.,103./255.,58./255.);
-    }
-    if material == 4 {
-        col = vec3<f32>(253./255.,103./255.,58./255.);
-    }
-    if material == 5 {
-        col = vec3<f32>(253./255.,103./255.,58./255.);
-    }
+    // let material = get_material(light_point);
+    // if material == 1 {
+    //     col = vec3<f32>(194./255.,130./255.,2./255.);
+    // }
+    // if material == 2 {
+    //     col = vec3<f32>(143./255.,120./255.,73./255.);
+    // }
+    // if material == 3 {
+    //     col = vec3<f32>(253./255.,103./255.,58./255.);
+    // }
+    // if material == 4 {
+    //     col = vec3<f32>(253./255.,103./255.,58./255.);
+    // }
+    // if material == 5 {
+    //     col = vec3<f32>(253./255.,103./255.,58./255.);
+    // }
+
+    col = normalize(vec3<f32>(3.2/(d-light_point)));
+    col.y = 1.0/(d+length(light_point));
     col *= diffuse_lighting;
     //gamma correction
     col = pow(col,vec3<f32>(0.4545,0.4545,0.4545));
