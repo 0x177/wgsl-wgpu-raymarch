@@ -20,6 +20,10 @@ fn get_rot_matrix(a:f32) -> mat2x2<f32> {
     return mat2x2<f32>(c,-s,s,c);
 }
 
+fn repeat(d:f32,domain:f32) -> f32 {
+    return (d%domain)-domain/2.0;
+}
+
 
 fn smin(a:f32,b:f32,k:f32) -> f32 {
     let h:f32 = clamp(0.5 + 0.5*(a-b)/k, 0.0, 1.0);
@@ -97,8 +101,9 @@ fn get_material(p:vec3<f32>) -> i32 {
     let capsule_distance = signed_distance_bean(p,vec3<f32>(1.0,1.0,6.0),vec3<f32>(3.0,2.0,6.0),0.2);
     let torus_distance = signed_distance_torus(p-vec3<f32>(-2.0,1.0,6.0),vec2<f32>(1.5,0.5));
     let cube_distance = signed_distance_box(p-vec3<f32>(-3.0,2.0,4.0),vec3<f32>(0.5,0.5,0.5));
+    let bulb = mandelbulb(p+vec3<f32>(3.0,-1.0,-2.0),uniforms.time);
 
-    let distance = min(min(capsule_distance,min(min(sphere_distance,cube_distance),torus_distance)),plane_distance);
+    let distance = min(min(sphere_distance,min(min(capsule_distance,min(torus_distance,cube_distance)),bulb)),plane_distance);
 
     if distance == sphere_distance {
         return 1;
@@ -114,6 +119,9 @@ fn get_material(p:vec3<f32>) -> i32 {
     }
     if distance == cube_distance {
         return 5;
+    }
+    if distance == bulb {
+        return 6;
     }
 
     return 0;
@@ -183,25 +191,27 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let light_point = ray_origin + ray_direction * d;
     let diffuse_lighting = get_light(light_point,surface_distance,max_steps,max_distance);
     col = vec3<f32>(diffuse_lighting);
-    // let material = get_material(light_point);
-    // if material == 1 {
-    //     col = vec3<f32>(194./255.,130./255.,2./255.);
-    // }
-    // if material == 2 {
-    //     col = vec3<f32>(143./255.,120./255.,73./255.);
-    // }
-    // if material == 3 {
-    //     col = vec3<f32>(253./255.,103./255.,58./255.);
-    // }
-    // if material == 4 {
-    //     col = vec3<f32>(253./255.,103./255.,58./255.);
-    // }
-    // if material == 5 {
-    //     col = vec3<f32>(253./255.,103./255.,58./255.);
-    // }
+    let material = get_material(light_point);
+    if material == 1 {
+        col = vec3<f32>(194./255.,130./255.,2./255.);
+    }
+    if material == 2 {
+        col = vec3<f32>(143./255.,120./255.,73./255.);
+    }
+    if material == 3 {
+        col = vec3<f32>(253./255.,103./255.,58./255.);
+    }
+    if material == 4 {
+        col = vec3<f32>(253./255.,103./255.,58./255.);
+    }
+    if material == 5 {
+        col = vec3<f32>(253./255.,103./255.,58./255.);
+    }
+    if material == 6 {
+        col = normalize(vec3<f32>(3.2/(d-light_point)));
+        col.y = 1.0/(d+length(light_point));
+    }
 
-    col = normalize(vec3<f32>(3.2/(d-light_point)));
-    col.y = 1.0/(d+length(light_point));
     col *= diffuse_lighting;
     //gamma correction
     col = pow(col,vec3<f32>(0.4545,0.4545,0.4545));
