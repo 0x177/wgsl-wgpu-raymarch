@@ -7,6 +7,7 @@ use std::{
     path::{PathBuf},
     sync::mpsc::channel,
     time::Instant,
+    num::NonZeroU32,
 };
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
@@ -15,7 +16,7 @@ use wgpu::{
     CompositeAlphaMode, Device, DeviceDescriptor, Features, Instance, Limits, LoadOp, Operations,
     PipelineLayout, PrimitiveState, Queue, RenderPassColorAttachment, RenderPassDescriptor,
     RenderPipeline, RequestAdapterOptions, ShaderModule, ShaderSource, ShaderStages, Surface,
-    SurfaceConfiguration, TextureFormat,
+    SurfaceConfiguration, TextureFormat, BindingResource,
 };
 use winit::event::Event::UserEvent;
 use winit::{
@@ -31,19 +32,27 @@ enum UserEvents {
     WGPUError,
 }
 
-// #[derive(Parser)]
-// struct Opts {
-//     wgsl_file: PathBuf,
+fn create_texels(size: usize) -> Vec<u8> {
+    (0..size * size)
+        .map(|id| {
+            // get high five for recognizing this ;)
+            let cx = 3.0 * (id % size) as f32 / (size - 1) as f32 - 2.0;
+            let cy = 2.0 * (id / size) as f32 / (size - 1) as f32 - 1.0;
+            let (mut x, mut y, mut count) = (cx, cy, 0);
+            while count < 0xFF && x * x + y * y < 4.0 {
+                let old_x = x;
+                x = x * x - y * y + cx;
+                y = 2.0 * old_x * y + cy;
+                count += 1;
+            }
+            count
+        })
+        .collect()
+}
 
-//     #[clap(short, long)]
-//     create: bool,
-
-//     #[clap(short, long)]
-//     always_on_top: bool,
-// }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Zeroable, bytemuck::Pod)]
+#[derive(Copy,Clone, Debug, bytemuck::Zeroable,bytemuck::Pod)]
 struct Uniforms {
     pub mouse: [f32; 2],
     pub time: f32,
@@ -67,7 +76,6 @@ impl Uniforms {
 }
 
 struct Playground {
-    // watch_path: PathBuf,
     render_pipeline: RenderPipeline,
     window: Window,
     device: Device,
@@ -144,7 +152,6 @@ impl Playground {
             &self.vertex_shader_module,
             &self.pipeline_layout,
             self.swapchain_format,
-            // &self.watch_path,
         ) {
             Ok(render_pipeline) => self.render_pipeline = render_pipeline,
             Err(e) => println!("{}", e),
@@ -156,7 +163,6 @@ impl Playground {
         vertex_shader_module: &ShaderModule,
         pipeline_layout: &PipelineLayout,
         swapchain_format: TextureFormat,
-        // frag_shader_path: &Path,
     ) -> Result<RenderPipeline, String> {
         let frag_wgsl = read_to_string("src/shader.wgsl").unwrap();
 
@@ -252,6 +258,7 @@ impl Playground {
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
         });
 
+
         let uniforms_buffer_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: None,
             entries: &[BindGroupLayoutEntry {
@@ -263,7 +270,19 @@ impl Playground {
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },
-            }],
+            },
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::FRAGMENT,
+                count: None,
+                ty: wgpu::BindingType::Texture {
+                    multisampled: false,
+                    sample_type: wgpu::TextureSampleType::Uint,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                },
+            },
+                
+            ],
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -279,7 +298,6 @@ impl Playground {
             &vertex_shader_module,
             &pipeline_layout,
             swapchain_format[0],
-            // &opts.wgsl_file,
         ) {
             Ok(render_pipeline) => render_pipeline,
             Err(e) => {
@@ -299,17 +317,51 @@ impl Playground {
 
         surface.configure(&device, &surface_config);
 
+        let size = 256u32;
+        let texels = create_texels(size as usize);
+        let texture_extent = wgpu::Extent3d {
+            width: size,
+            height: size,
+            depth_or_array_layers: 1,
+        };
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: texture_extent,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Uint,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            // view_formats: &[],
+        });
+        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        queue.write_texture(
+            texture.as_image_copy(),
+            &texels,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(NonZeroU32::new(size).unwrap()),
+                rows_per_image: None,
+            },
+            texture_extent,
+        );
+
         let uniforms_buffer_bind_group = device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &uniforms_buffer_layout,
-            entries: &[BindGroupEntry {
+            entries: &[
+            BindGroupEntry {
                 binding: 0,
                 resource: uniforms_buffer.as_entire_binding(),
-            }],
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: BindingResource::TextureView(&texture_view),
+            },
+            ],
         });
 
         let mut playground = Playground {
-            // watch_path: "src/shader.wgsl".into(),
             render_pipeline,
             window,
             device,
@@ -398,23 +450,6 @@ impl Playground {
 
 fn main() {
     wgpu_subscriber::initialize_default_subscriber(None);
-
-    // if opts.create {
-    //     let mut file = if let Ok(file) = OpenOptions::new()
-    //         .write(true)
-    //         .create_new(true)
-    //         .open(opts.wgsl_file.clone())
-    //     {
-    //         file
-    //     } else {
-    //         println!(
-    //             "Couldn't create file {:?}, make sure it doesn't already exist.",
-    //             &opts.wgsl_file
-    //         );
-    //         return;
-    //     };
-    //     file.write_all(include_bytes!("frag.default.wgsl")).unwrap();
-    // }
 
     Playground::run();
 }

@@ -13,6 +13,10 @@ struct Uniforms {
 var<uniform> uniforms: Uniforms;
 
 
+@group(0) @binding(1)
+var te: texture_2d<u32>;
+
+
 fn get_rot_matrix(a:f32) -> mat2x2<f32> {
     let s = sin(a);
     let c = cos(a);
@@ -82,7 +86,7 @@ fn get_distance(p:vec3<f32>) -> f32 {
     let plane_distance = p.y;
     let capsule_distance = signed_distance_bean(p,vec3<f32>(1.0,1.0,6.0),vec3<f32>(3.0,2.0,6.0),0.2);
     let torus_distance = signed_distance_torus(p-vec3<f32>(-2.0,1.0,6.0),vec2<f32>(1.5,0.5));
-    let cube_distance = signed_distance_box(p-vec3<f32>(-3.0,2.0,4.0),vec3<f32>(0.5,0.5,0.5));
+    let cube_distance = signed_distance_box(p-vec3<f32>(-3.0,2.0,4.0),vec3<f32>(0.5,0.5,0.5)) - 0.2;
     let bulb = mandelbulb(p+vec3<f32>(3.0,-1.0,-2.0),uniforms.time);
 
     return smin(smin(sphere_distance,smin(smin(capsule_distance,smin(torus_distance,cube_distance,1.0),1.0),bulb,1.0),1.0),plane_distance,1.0);
