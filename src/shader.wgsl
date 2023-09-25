@@ -90,10 +90,11 @@ fn get_distance(p:vec3<f32>) -> f32 {
     let plane_distance = p.y;
     let capsule_distance = signed_distance_bean(p,vec3<f32>(1.0,1.0,6.0),vec3<f32>(3.0,2.0,6.0),0.2);
     let torus_distance = signed_distance_torus(p-vec3<f32>(-2.0,1.0,6.0),vec2<f32>(1.5,0.5));
-    let cube_distance = signed_distance_box(p-vec3<f32>(-3.0,2.0,4.0),vec3<f32>(0.5,0.5,0.5)) - 0.2;
+    let cube_distance = signed_distance_box(p-vec3<f32>(-3.0,1.0,4.0),vec3<f32>(0.5,0.5,0.5));
     let bulb = mandelbulb(p+vec3<f32>(3.0,-1.0,-2.0),uniforms.time);
 
     return smin(smin(sphere_distance,smin(smin(capsule_distance,smin(torus_distance,cube_distance,1.0),1.0),bulb,1.0),1.0),plane_distance,1.0);
+    // return sphere_distance;
 
 }
 
@@ -108,10 +109,11 @@ fn get_material(p:vec3<f32>) -> i32 {
     let plane_distance = p.y;
     let capsule_distance = signed_distance_bean(p,vec3<f32>(1.0,1.0,6.0),vec3<f32>(3.0,2.0,6.0),0.2);
     let torus_distance = signed_distance_torus(p-vec3<f32>(-2.0,1.0,6.0),vec2<f32>(1.5,0.5));
-    let cube_distance = signed_distance_box(p-vec3<f32>(-3.0,2.0,4.0),vec3<f32>(0.5,0.5,0.5));
+    let cube_distance = signed_distance_box(p-vec3<f32>(-3.0,1.0,4.0),vec3<f32>(0.5,0.5,0.5));
     let bulb = mandelbulb(p+vec3<f32>(3.0,-1.0,-2.0),uniforms.time);
 
     let distance = min(min(sphere_distance,min(min(capsule_distance,min(torus_distance,cube_distance)),bulb)),plane_distance);
+    // let distance = sphere_distance;
 
     if distance == sphere_distance {
         return 1;
@@ -185,6 +187,14 @@ fn get_light(p:vec3<f32>,surface_distance:f32,max_steps:i32,max_distance:f32) ->
 }
 
 
+fn tri_planar_mapping(light_point:vec3<f32>,texture:texture_2d<f32>,tsampler:sampler) -> vec3<f32> {
+    let texture_col_xz = textureSample(texture,tsampler,light_point.xz*0.5+0.5).xyz;
+    let texture_col_yz = textureSample(texture,tsampler,light_point.yz*0.5+0.5).xyz;
+    let texture_col_xy = textureSample(texture,tsampler,light_point.xy*0.5+0.5).xyz;
+    let norm = abs(get_normal(light_point));
+    return texture_col_yz*norm.x + texture_col_xz*norm.y + texture_col_xy*norm.z;
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {    
     var col = vec3<f32>(0.0,0.0,0.0);
@@ -200,8 +210,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let diffuse_lighting = get_light(light_point,surface_distance,max_steps,max_distance);
     col = vec3<f32>(diffuse_lighting);
     let material = get_material(light_point);
+    // let texture_col_xz = textureSample(texture,tsampler,light_point.xz*0.5+0.5).xyz;
+    // let texture_col_yz = textureSample(texture,tsampler,light_point.yz*0.5+0.5).xyz;
+    // let texture_col_xy = textureSample(texture,tsampler,light_point.xy*0.5+0.5).xyz;
+    // let norm = abs(get_normal(light_point));
     if material == 1 {
-        col = vec3<f32>(194./255.,130./255.,2./255.);
+        col = tri_planar_mapping(light_point,texture,tsampler);
     }
     if material == 2 {
         col = vec3<f32>(143./255.,120./255.,73./255.);
@@ -213,11 +227,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         col = vec3<f32>(253./255.,103./255.,58./255.);
     }
     if material == 5 {
-        col = vec3<f32>(253./255.,103./255.,58./255.);
+        col = tri_planar_mapping(light_point,texture,tsampler);
     }
     if material == 6 {
-        col = normalize(vec3<f32>(3.2/(d-light_point)));
-        col.y = 1.0/(d+length(light_point));
+        col = tri_planar_mapping(light_point,texture,tsampler);
     }
 
     col *= diffuse_lighting;

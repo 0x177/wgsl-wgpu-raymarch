@@ -26,29 +26,31 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
+
+
 #[derive(Debug)]
 enum UserEvents {
     Reload,
     WGPUError,
 }
 
-fn create_texels(size: usize) -> Vec<u8> {
-    (0..size * size)
-        .map(|id| {
-            // get high five for recognizing this ;)
-            let cx = 3.0 * (id % size) as f32 / (size - 1) as f32 - 2.0;
-            let cy = 2.0 * (id / size) as f32 / (size - 1) as f32 - 1.0;
-            let (mut x, mut y, mut count) = (cx, cy, 0);
-            while count < 0xFF && x * x + y * y < 4.0 {
-                let old_x = x;
-                x = x * x - y * y + cx;
-                y = 2.0 * old_x * y + cy;
-                count += 1;
-            }
-            count
-        })
-        .collect()
-}
+// fn create_texels(size: usize) -> Vec<u8> {
+//     (0..size * size)
+//         .map(|id| {
+//             // get high five for recognizing this ;)
+//             let cx = 3.0 * (id % size) as f32 / (size - 1) as f32 - 2.0;
+//             let cy = 2.0 * (id / size) as f32 / (size - 1) as f32 - 1.0;
+//             let (mut x, mut y, mut count) = (cx, cy, 0);
+//             while count < 0xFF && x * x + y * y < 4.0 {
+//                 let old_x = x;
+//                 x = x * x - y * y + cx;
+//                 y = 2.0 * old_x * y + cy;
+//                 count += 1;
+//             }
+//             count
+//         })
+//         .collect()
+// }
 
 
 #[repr(C)]
@@ -277,7 +279,7 @@ impl Playground {
                 count: None,
                 ty: wgpu::BindingType::Texture {
                     multisampled: false,
-                    sample_type: wgpu::TextureSampleType::Uint,
+                    sample_type: wgpu::TextureSampleType::Float {filterable: true},
                     view_dimension: wgpu::TextureViewDimension::D2,
                 },
             },
@@ -324,11 +326,16 @@ impl Playground {
 
         surface.configure(&device, &surface_config);
 
-        let size = 256u32;
-        let texels = create_texels(size as usize);
+        let diffuse_bytes = include_bytes!("rock.png");
+        let diffuse_image = image::load_from_memory(diffuse_bytes).unwrap();
+        let diffuse_rgba = diffuse_image.to_rgba8();
+
+        use image::GenericImageView;
+        let dimensions = diffuse_image.dimensions();
+        
         let texture_extent = wgpu::Extent3d {
-            width: size,
-            height: size,
+            width: dimensions.0,
+            height: dimensions.1,
             depth_or_array_layers: 1,
         };
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -337,17 +344,17 @@ impl Playground {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R8Uint,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             // view_formats: &[],
         });
         let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         queue.write_texture(
             texture.as_image_copy(),
-            &texels,
+            &diffuse_rgba,
             wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: Some(NonZeroU32::new(size).unwrap()),
+                bytes_per_row: Some(NonZeroU32::new(4*dimensions.0).unwrap()),
                 rows_per_image: None,
             },
             texture_extent,
@@ -355,9 +362,9 @@ impl Playground {
 
         
         let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
@@ -472,6 +479,7 @@ impl Playground {
 
 fn main() {
     wgpu_subscriber::initialize_default_subscriber(None);
+    // env_logger::init();
 
     Playground::run();
 }
