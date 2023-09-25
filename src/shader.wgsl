@@ -14,7 +14,11 @@ var<uniform> uniforms: Uniforms;
 
 
 @group(0) @binding(1)
-var te: texture_2d<u32>;
+var texture: texture_2d<f32>;
+
+
+@group(0) @binding(2)
+var tsampler: sampler;
 
 
 fn get_rot_matrix(a:f32) -> mat2x2<f32> {

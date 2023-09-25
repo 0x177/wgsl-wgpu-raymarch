@@ -281,6 +281,13 @@ impl Playground {
                     view_dimension: wgpu::TextureViewDimension::D2,
                 },
             },
+
+            BindGroupLayoutEntry {
+                binding: 2,
+                visibility: ShaderStages::FRAGMENT,
+                count: None,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), 
+            },
                 
             ],
         });
@@ -346,6 +353,17 @@ impl Playground {
             texture_extent,
         );
 
+        
+        let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
         let uniforms_buffer_bind_group = device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &uniforms_buffer_layout,
@@ -357,6 +375,10 @@ impl Playground {
             BindGroupEntry {
                 binding: 1,
                 resource: BindingResource::TextureView(&texture_view),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: BindingResource::Sampler(&texture_sampler),
             },
             ],
         });
