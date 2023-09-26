@@ -25,6 +25,9 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
+const SCREENWIDTH: f32 = 1920.0;
+const SCREENHEIGHT: f32 = 1080.0;
+
 
 
 #[derive(Debug)]
@@ -40,6 +43,8 @@ struct Uniforms {
     pub mouse: [f32; 2],
     pub time: f32,
     pub pad: f32,
+    pub screen_width: f32,
+    pub screen_height: f32,
 }
 
 impl Default for Uniforms {
@@ -48,6 +53,8 @@ impl Default for Uniforms {
             time: 0.,
             mouse: [0.0, 0.0],
             pad: 0.,
+            screen_width: SCREENWIDTH,
+            screen_height: SCREENHEIGHT,
         }
     }
 }
@@ -196,7 +203,7 @@ impl Playground {
         }
 
         let window = WindowBuilder::new()
-            .with_inner_size(PhysicalSize::new(1920, 1080))
+            .with_inner_size(PhysicalSize::new(SCREENWIDTH as u32, SCREENHEIGHT as u32))
             .with_title("cool shapes :3")
             .build(&event_loop)
             .unwrap();

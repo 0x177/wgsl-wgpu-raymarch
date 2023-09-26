@@ -7,6 +7,8 @@ struct VertexOutput {
 struct Uniforms {
     mouse: vec2<f32>,
     time: f32,
+    screen_width: f32,
+    screen_height: f32,
 };
 
 @group(0) @binding(0)
@@ -38,6 +40,39 @@ fn smin(a:f32,b:f32,k:f32) -> f32 {
     return mix(a, b, h) - k*h*(1.0-h);
 }
 
+fn union_stairs(a:f32, b:f32,r:f32,n:f32) -> f32 {
+	let s = r/n;
+	let u = b-r;
+	return min(min(a,b), 0.5 * (u + a + abs (((u - a + s% 2.0 * s)) - s)));
+}
+
+
+fn vmax(v:vec2<f32>) -> f32 {
+	return max(v.x, v.y);
+}
+
+fn vmax3(v:vec3<f32>) -> f32 {
+	return max(max(v.x, v.y), v.z);
+}
+
+fn vmax4(v:vec4<f32>) -> f32 {
+	return max(max(v.x, v.y), max(v.z, v.w));
+}
+
+fn vmin(v:vec2<f32>) -> f32 {
+	return min(v.x, v.y);
+}
+
+fn vmin3(v:vec3<f32>) -> f32 {
+	return min(min(v.x, v.y), v.z);
+}
+
+fn vmin4(v:vec4<f32>) -> f32 {
+	return min(min(v.x, v.y), min(v.z, v.w));
+}
+
+
+
 fn signed_distance_bean(p:vec3<f32>,a:vec3<f32>,b:vec3<f32>,radius:f32) -> f32 {
     let ab = b-a;
     let ap = p-a;
@@ -55,8 +90,14 @@ fn signed_distance_torus(p:vec3<f32>,radius:vec2<f32>) -> f32 {
 }
 
 fn signed_distance_box(p:vec3<f32>,size:vec3<f32>) -> f32 {
-    return length(max(abs(p)-size,vec3<f32>(0.0,0.0,0.0))) - 0.1;
+    return length(max(abs(p)-size,vec3<f32>(0.0,0.0,0.0)));
 }
+
+fn signed_distance_box_endless(p:vec2<f32>,size:vec2<f32>) -> f32 {
+    let d = abs(p)-size;
+    return length(max(d,vec2<f32>(0.0)+ vmax(min(d,vec2<f32>(0.0)))));
+}
+
 
 fn mandelbulb(p: vec3<f32>,power:f32) -> f32 {
     var z = p;
@@ -80,6 +121,24 @@ fn mandelbulb(p: vec3<f32>,power:f32) -> f32 {
     }
 
     return 0.5 * log(r) * r / dr;
+}
+
+fn plane(p:vec3<f32>,normal:vec3<f32>,distance_from_origin:f32) -> f32 {
+    return dot(p,normal) + distance_from_origin;
+}
+
+fn disc(p:vec3<f32>,r:f32) -> f32 {
+    let l = length(p.xz) - r;
+    if l < 0.0 {
+        return abs(p.y);
+    }
+
+    return length(vec2<f32>(p.y,l));
+}
+
+fn hexagonal_circum_circle(p:vec3<f32>,h:vec2<f32>) -> f32 {
+    let q = abs(p);
+    return max(q.y - h.y, max(q.x*sqrt(3.0)*0.5 + q.z*0.5, q.z) - h.x);
 }
 
 fn get_distance(p:vec3<f32>) -> vec2<f32> {
@@ -116,7 +175,6 @@ fn get_distance(p:vec3<f32>) -> vec2<f32> {
     }
 
     return vec2<f32>(distance_smooth,0.0);
-
 }
 
 
@@ -183,7 +241,7 @@ fn tri_planar_mapping(light_point:vec3<f32>,texture:texture_2d<f32>,tsampler:sam
 }
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {    
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {   
     var col = vec3<f32>(0.0,0.0,0.0);
     let max_steps: i32 = 100;
     let max_distance: f32 = 100.0;
@@ -217,7 +275,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         col = tri_planar_mapping(light_point,texture,tsampler);
     }
     if material == 6 {
-        col = tri_planar_mapping(light_point,texture,tsampler);
+        col = vec3<f32>(0.8,0.0,0.4);
     }
 
     col *= diffuse_lighting;
