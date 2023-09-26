@@ -1,4 +1,3 @@
-// use clap::Parser;
 use futures::executor::block_on;
 use notify::{RawEvent, RecommendedWatcher, Watcher};
 use std::{
@@ -33,24 +32,6 @@ enum UserEvents {
     Reload,
     WGPUError,
 }
-
-// fn create_texels(size: usize) -> Vec<u8> {
-//     (0..size * size)
-//         .map(|id| {
-//             // get high five for recognizing this ;)
-//             let cx = 3.0 * (id % size) as f32 / (size - 1) as f32 - 2.0;
-//             let cy = 2.0 * (id / size) as f32 / (size - 1) as f32 - 1.0;
-//             let (mut x, mut y, mut count) = (cx, cy, 0);
-//             while count < 0xFF && x * x + y * y < 4.0 {
-//                 let old_x = x;
-//                 x = x * x - y * y + cx;
-//                 y = 2.0 * old_x * y + cy;
-//                 count += 1;
-//             }
-//             count
-//         })
-//         .collect()
-// }
 
 
 #[repr(C)]
@@ -346,7 +327,6 @@ impl Playground {
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8UnormSrgb,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            // view_formats: &[],
         });
         let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         queue.write_texture(
@@ -479,7 +459,6 @@ impl Playground {
 
 fn main() {
     wgpu_subscriber::initialize_default_subscriber(None);
-    // env_logger::init();
 
     Playground::run();
 }
