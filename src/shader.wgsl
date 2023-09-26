@@ -218,7 +218,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         col = tri_planar_mapping(light_point,texture,tsampler);
     }
     if material == 2 {
-        col = vec3<f32>(143./255.,120./255.,73./255.);
+        col = tri_planar_mapping(light_point,texture,tsampler);
     }
     if material == 3 {
         col = vec3<f32>(253./255.,103./255.,58./255.);
